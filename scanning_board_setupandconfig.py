@@ -4,10 +4,14 @@
 # Date: 2026-07-21
 # Description: This is the final version of the BCI Scanning Board but adds a configuration file integration feature, removing the need for a config.json file. 
 #               
+#               Version History:
 #               2026-07-23
                 # - Added CortexCredentialsDialog class, which acts as a configurable settings file dialog for entering EMOTIV Cortex API credentials and Profile Name.
-                # - Added a settings menu to include custom phrases.
+                # - Added a settings menu to include custom phrases. --> saved in phrases.json file.
                 # - Added realtime battery and signal monitoring to the device screen.
+#               2026-07-27
+                # - Added Action Mapping Dropdowns in API screen: Choose from standard EMOTIV mental commands and facial EMG expressions for both SELECT and CHANGE SPEED actions.
+                # - route_bci_command and route_facial_command now evaluate incoming WebSocket triggers against your custom assigned mappings instead of hardcoded strings.
 ### ---------------------------------------------------------------------------------- ###
 import sys
 import json
@@ -16,7 +20,7 @@ from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QGridLayout,
                              QLabel, QVBoxLayout, QHBoxLayout, QPushButton, 
                              QStackedWidget, QCheckBox, QSlider, QDialog, 
                              QLineEdit, QFormLayout, QMessageBox, QListWidget, 
-                             QListWidgetItem, QInputDialog)
+                             QInputDialog, QComboBox)
 from PyQt6.QtCore import QTimer, Qt, QThread, pyqtSignal, QPoint
 from PyQt6.QtGui import QFont, QPainter, QColor, QPen
 
@@ -31,8 +35,12 @@ DEFAULT_PHRASES_LIST = [
     "TO GO", "TO CALL", "A HUG", "A KISS", "COMPANY", "FLIP OVER", "SOMETHING ELSE"
 ]
 
+# Available EMOTIV Actions for Action Mapping
+MENTAL_COMMAND_OPTIONS = ["push", "pull", "lift", "drop", "left", "right", "rotateClockwise", "rotateCounterClockwise", "disappear", "None"]
+FACIAL_EXPRESSION_OPTIONS = ["clench", "furrow", "smile", "surprise", "smirkLeft", "smirkRight", "laugh", "None"]
+
+
 def load_phrases_from_file():
-    """Loads phrases from phrases.json or generates defaults."""
     if os.path.exists("phrases.json"):
         try:
             with open("phrases.json", "r") as f:
@@ -44,9 +52,7 @@ def load_phrases_from_file():
     return DEFAULT_PHRASES_LIST[:]
 
 def build_phrase_matrix(phrases_list):
-    """Chunks a list of phrases into a clean 7x7 grid for scanning."""
     items = phrases_list[:]
-    # Ensure FLIP OVER is always present at the end of matrix
     if "FLIP OVER" not in items:
         items.append("FLIP OVER")
         
@@ -75,7 +81,6 @@ BOARD_2_ALPHA = [
 
 # --- CAREGIVER CUSTOM PHRASE MANAGER DIALOG ---
 class PhraseManagerDialog(QDialog):
-    """Modal dialog allowing caregivers to add, edit, or delete board phrases."""
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Caregiver Custom Phrase Manager")
@@ -194,34 +199,39 @@ class PhraseManagerDialog(QDialog):
             QMessageBox.critical(self, "Save Error", f"Could not save phrases.json:\n{e}")
 
 
-# --- GUI CREDENTIALS & PROFILE SETUP DIALOG ---
+# --- GUI CREDENTIALS & ACTION MAPPING DIALOG ---
 class CortexCredentialsDialog(QDialog):
-    """Modal dialog for entering EMOTIV Cortex API credentials and Profile Name."""
+    """Modal dialog for entering API credentials, profile, and assigning BCI actions."""
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("EMOTIV Cortex API Configuration")
-        self.setFixedSize(480, 280)
+        self.setWindowTitle("EMOTIV Cortex API & Trigger Mapping Configuration")
+        self.setFixedSize(520, 440)
         
         self.setStyleSheet("""
             QDialog { background-color: #ffffff; font-family: 'Segoe UI'; }
             QLabel { color: #1e293b; font-size: 11px; font-weight: bold; }
-            QLineEdit {
-                color: #0f172a; background-color: #f8fafc; padding: 6px;
+            QLineEdit, QComboBox {
+                color: #0f172a; background-color: #f8fafc; padding: 5px;
                 border: 1px solid #cbd5e1; border-radius: 4px; font-size: 11px;
             }
-            QLineEdit:focus { border: 1px solid #d9145a; background-color: #ffffff; }
+            QLineEdit:focus, QComboBox:focus { border: 1px solid #d9145a; background-color: #ffffff; }
         """)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(25, 20, 25, 20)
 
-        header_lbl = QLabel("EMOTIV Cortex API & Profile Setup")
+        header_lbl = QLabel("EMOTIV Cortex API & Expression Mapping")
         header_lbl.setFont(QFont("Segoe UI", 12, QFont.Weight.Bold))
-        header_lbl.setStyleSheet("color: #d9145a; margin-bottom: 5px;")
+        header_lbl.setStyleSheet("color: #d9145a; margin-bottom: 2px;")
         layout.addWidget(header_lbl)
 
+        sub_lbl = QLabel("Configure credentials and map your trained BCI commands to actions.")
+        sub_lbl.setFont(QFont("Segoe UI", 9))
+        sub_lbl.setStyleSheet("color: #64748b; margin-bottom: 10px;")
+        layout.addWidget(sub_lbl)
+
         form_layout = QFormLayout()
-        form_layout.setSpacing(12)
+        form_layout.setSpacing(10)
 
         self.client_id_input = QLineEdit()
         self.client_id_input.setPlaceholderText("Paste Client ID here...")
@@ -235,6 +245,29 @@ class CortexCredentialsDialog(QDialog):
         self.profile_name_input = QLineEdit()
         self.profile_name_input.setPlaceholderText("e.g. John_Insight")
         form_layout.addRow("Profile Name:", self.profile_name_input)
+
+        # Mapping Separator
+        sep_label = QLabel("─── BCI & Facial Action Mappings ───")
+        sep_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        sep_label.setStyleSheet("color: #94a3b8; font-size: 10px; margin-top: 8px; margin-bottom: 4px;")
+        form_layout.addRow(sep_label)
+
+        # Dropdowns for Action Mapping
+        self.select_thought_combo = QComboBox()
+        self.select_thought_combo.addItems(MENTAL_COMMAND_OPTIONS)
+        form_layout.addRow("SELECT (Thought):", self.select_thought_combo)
+
+        self.select_facial_combo = QComboBox()
+        self.select_facial_combo.addItems(FACIAL_EXPRESSION_OPTIONS)
+        form_layout.addRow("SELECT (Facial):", self.select_facial_combo)
+
+        self.speed_thought_combo = QComboBox()
+        self.speed_thought_combo.addItems(MENTAL_COMMAND_OPTIONS)
+        form_layout.addRow("CHANGE SPEED (Thought):", self.speed_thought_combo)
+
+        self.speed_facial_combo = QComboBox()
+        self.speed_facial_combo.addItems(FACIAL_EXPRESSION_OPTIONS)
+        form_layout.addRow("CHANGE SPEED (Facial):", self.speed_facial_combo)
 
         layout.addLayout(form_layout)
         layout.addSpacing(15)
@@ -267,6 +300,18 @@ class CortexCredentialsDialog(QDialog):
                     self.client_id_input.setText(cfg.get("cortex_client_id", cfg.get("client_id", "")))
                     self.client_secret_input.setText(cfg.get("cortex_client_secret", cfg.get("client_secret", "")))
                     self.profile_name_input.setText(cfg.get("profile_name", ""))
+
+                    # Set combo dropdown positions
+                    sel_th = cfg.get("select_thought", "push")
+                    sel_fc = cfg.get("select_facial", "clench")
+                    spd_th = cfg.get("speed_thought", "pull")
+                    spd_fc = cfg.get("speed_facial", "furrow")
+
+                    if sel_th in MENTAL_COMMAND_OPTIONS: self.select_thought_combo.setCurrentText(sel_th)
+                    if sel_fc in FACIAL_EXPRESSION_OPTIONS: self.select_facial_combo.setCurrentText(sel_fc)
+                    if spd_th in MENTAL_COMMAND_OPTIONS: self.speed_thought_combo.setCurrentText(spd_th)
+                    if spd_fc in FACIAL_EXPRESSION_OPTIONS: self.speed_facial_combo.setCurrentText(spd_fc)
+
             except Exception:
                 pass
 
@@ -282,7 +327,11 @@ class CortexCredentialsDialog(QDialog):
         cfg = {
             "cortex_client_id": client_id,
             "cortex_client_secret": client_secret,
-            "profile_name": profile_name
+            "profile_name": profile_name,
+            "select_thought": self.select_thought_combo.currentText(),
+            "select_facial": self.select_facial_combo.currentText(),
+            "speed_thought": self.speed_thought_combo.currentText(),
+            "speed_facial": self.speed_facial_combo.currentText()
         }
 
         try:
@@ -315,7 +364,7 @@ class EmotivCortexWorker(QThread):
     contact_quality_signal = pyqtSignal(dict)  
     eeg_quality_signal = pyqtSignal(dict)      
     facial_expression_signal = pyqtSignal(str, float, str, float)
-    device_diagnostics_signal = pyqtSignal(int, int) # battery_pct, signal_pct
+    device_diagnostics_signal = pyqtSignal(int, int) 
     device_name_signal = pyqtSignal(str)       
     status_signal = pyqtSignal(str)
 
@@ -355,11 +404,9 @@ class EmotivCortexWorker(QThread):
                 try:
                     msg = json.loads(message)
                     if isinstance(msg, dict):
-                        # Intercept dev packet for battery and signal diagnostics
                         if "dev" in msg:
                             raw_dev = msg["dev"]
                             if isinstance(raw_dev, list) and len(raw_dev) >= 2:
-                                # Extract Battery % & Signal Strength
                                 batt_pct = 100
                                 sig_pct = 100
                                 if len(raw_dev) >= 4 and isinstance(raw_dev[3], (int, float)):
@@ -520,6 +567,7 @@ class BCICommunicationBoard(QMainWindow):
         self.setCentralWidget(self.page_container)
         
         self.current_setup_tab = "CQ"
+        self.load_bci_action_mappings()
         self.build_preflight_screen()
         self.build_keyboard_screen()
         
@@ -531,6 +579,24 @@ class BCICommunicationBoard(QMainWindow):
         self.start_cortex_worker()
 
         QTimer.singleShot(500, self.check_credentials_on_launch)
+
+    def load_bci_action_mappings(self):
+        """Loads configured action trigger mappings from config.json."""
+        self.select_thought = "push"
+        self.select_facial = "clench"
+        self.speed_thought = "pull"
+        self.speed_facial = "furrow"
+
+        if os.path.exists("config.json"):
+            try:
+                with open("config.json", "r") as f:
+                    cfg = json.load(f)
+                    self.select_thought = cfg.get("select_thought", "push")
+                    self.select_facial = cfg.get("select_facial", "clench")
+                    self.speed_thought = cfg.get("speed_thought", "pull")
+                    self.speed_facial = cfg.get("speed_facial", "furrow")
+            except Exception:
+                pass
 
     def closeEvent(self, event):
         print("[SYSTEM] Shutting down application...")
@@ -567,6 +633,8 @@ class BCICommunicationBoard(QMainWindow):
     def open_credentials_dialog(self):
         dlg = CortexCredentialsDialog(self)
         if dlg.exec() == QDialog.DialogCode.Accepted:
+            self.load_bci_action_mappings()
+            self.handle_stream_selectors_toggled()
             self.start_cortex_worker()
 
     def open_phrase_manager_dialog(self):
@@ -603,7 +671,6 @@ class BCICommunicationBoard(QMainWindow):
         
         nav_header.addStretch()
 
-        # 📝 Custom Phrase Manager Button
         self.phrases_btn = QPushButton("📝 Phrases")
         self.phrases_btn.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
         self.phrases_btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -611,7 +678,6 @@ class BCICommunicationBoard(QMainWindow):
         self.phrases_btn.clicked.connect(self.open_phrase_manager_dialog)
         nav_header.addWidget(self.phrases_btn)
 
-        # ⚙️ API Configuration Button
         self.config_btn = QPushButton("⚙️ API Settings")
         self.config_btn.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
         self.config_btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -863,7 +929,6 @@ class BCICommunicationBoard(QMainWindow):
         self.facial_selector.toggled.connect(self.handle_stream_selectors_toggled)
         status_layout.addWidget(self.facial_selector)
 
-        # 🔋 Live Battery & Signal Diagnostics Banner
         self.keyboard_diagnostics_label = QLabel("🔋 --%  📶 --%")
         self.keyboard_diagnostics_label.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
         self.keyboard_diagnostics_label.setStyleSheet("color: #4f5d75; padding-right: 10px;")
@@ -874,11 +939,13 @@ class BCICommunicationBoard(QMainWindow):
         self.keyboard_network_status_label.setStyleSheet("color: #2ecc71; padding-right: 10px;")
         status_layout.addWidget(self.keyboard_network_status_label)
         
-        self.controls_label = QLabel("Push/Clench = SELECT  •  Pull/Furrow = SPEED")
+        self.controls_label = QLabel("")
         self.controls_label.setFont(QFont("Segoe UI", 11, QFont.Weight.Bold))
         self.controls_label.setStyleSheet("color: #4f5d75; padding: 5px;")
         status_layout.addWidget(self.controls_label)
         self.main_layout.addLayout(status_layout)
+
+        self.handle_stream_selectors_toggled()
 
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.advance_scanner)
@@ -889,7 +956,6 @@ class BCICommunicationBoard(QMainWindow):
         self.update_telemetry_box("neutral")
 
     def update_device_diagnostics(self, battery_pct, signal_pct):
-        """Updates live battery percentage and signal quality indicators across UI screens."""
         batt_color = "#2ecc71" if battery_pct > 50 else ("#f39c12" if battery_pct > 20 else "#d9145a")
         diag_text = f"🔋 {battery_pct}%   📶 {signal_pct}%"
         
@@ -942,12 +1008,17 @@ class BCICommunicationBoard(QMainWindow):
         m_on = self.mental_selector.isChecked()
         f_on = self.facial_selector.isChecked()
 
+        sel_t = self.select_thought.capitalize()
+        sel_f = self.select_facial.capitalize()
+        spd_t = self.speed_thought.capitalize()
+        spd_f = self.speed_facial.capitalize()
+
         if m_on and f_on:
-            self.controls_label.setText("Push/Clench = SELECT  •  Pull/Furrow = SPEED")
+            self.controls_label.setText(f"{sel_t}/{sel_f} = SELECT  •  {spd_t}/{spd_f} = SPEED")
         elif m_on and not f_on:
-            self.controls_label.setText("Push = SELECT  •  Pull = SPEED")
+            self.controls_label.setText(f"{sel_t} = SELECT  •  {spd_t} = SPEED")
         elif not m_on and f_on:
-            self.controls_label.setText("Clench = SELECT  •  Furrow = SPEED")
+            self.controls_label.setText(f"{sel_f} = SELECT  •  {spd_f} = SPEED")
         else:
             self.controls_label.setText("ALL BCI OVERRIDES DISABLED")
             
@@ -1057,14 +1128,20 @@ class BCICommunicationBoard(QMainWindow):
             return
 
         clean_command = command.strip().lower()
-        action_map = {"push": "SELECT", "pull": "CHANGE SPEED", "neutral": "IDLE"}
-        mapped_action = action_map.get(clean_command, "UNKNOWN")
 
         if clean_command == "neutral":
             self.mental_state_str = f"NEUTRAL (IDLING) [Power: {power:.2f}]"
             self.update_telemetry_box("neutral")
             self.latch_released = True
             return
+
+        is_select_cmd = (clean_command == self.select_thought.lower())
+        is_speed_cmd = (clean_command == self.speed_thought.lower())
+
+        if not is_select_cmd and not is_speed_cmd:
+            return
+
+        mapped_action = "SELECT" if is_select_cmd else "CHANGE SPEED"
 
         if power < self.MENTAL_THRESHOLD:
             self.mental_state_str = f"{clean_command.upper()} ({mapped_action}) [Power: {power:.2f}] (Below Threshold)"
@@ -1081,9 +1158,9 @@ class BCICommunicationBoard(QMainWindow):
         self.update_telemetry_box("mental_trigger")
         self.latch_released = False
         
-        if clean_command == "push":
+        if is_select_cmd:
             self.trigger_select_event()
-        elif clean_command == "pull":
+        elif is_speed_cmd:
             self.trigger_speed_change()
 
     def route_facial_command(self, u_act, u_pow, l_act, l_pow):
@@ -1093,10 +1170,26 @@ class BCICommunicationBoard(QMainWindow):
         if not self.facial_selector.isChecked():
             return
 
-        clench_active = (l_act.strip().lower() == "clench" and l_pow >= self.FACIAL_THRESHOLD)
-        furrow_active = (u_act.strip().lower() in ["frown", "furrow"] and u_pow >= self.FACIAL_THRESHOLD)
+        u_act_clean = u_act.strip().lower()
+        l_act_clean = l_act.strip().lower()
 
-        if not clench_active and not furrow_active:
+        # Handle alias mapping for furrow/frown
+        if u_act_clean == "frown": u_act_clean = "furrow"
+
+        target_sel_fac = self.select_facial.lower()
+        target_spd_fac = self.speed_facial.lower()
+
+        select_active = (
+            (l_act_clean == target_sel_fac and l_pow >= self.FACIAL_THRESHOLD) or
+            (u_act_clean == target_sel_fac and u_pow >= self.FACIAL_THRESHOLD)
+        )
+        
+        speed_active = (
+            (l_act_clean == target_spd_fac and l_pow >= self.FACIAL_THRESHOLD) or
+            (u_act_clean == target_spd_fac and u_pow >= self.FACIAL_THRESHOLD)
+        )
+
+        if not select_active and not speed_active:
             self.facial_latch_released = True
             if self.facial_state_str != "READY (IDLING)":
                 self.facial_state_str = "READY (IDLING)"
@@ -1106,14 +1199,18 @@ class BCICommunicationBoard(QMainWindow):
         if not self.facial_latch_released:
             return
 
-        if clench_active:
-            self.facial_state_str = f"TRIGGERED CLENCH (SELECT BACKUP)! [Power: {l_pow:.2f}]"
+        if select_active:
+            act_name = target_sel_fac.upper()
+            pow_val = l_pow if l_act_clean == target_sel_fac else u_pow
+            self.facial_state_str = f"TRIGGERED {act_name} (SELECT BACKUP)! [Power: {pow_val:.2f}]"
             self.update_telemetry_box("facial_trigger")
             self.facial_latch_released = False
             self.trigger_select_event()
             
-        elif furrow_active:
-            self.facial_state_str = f"TRIGGERED FURROW (SPEED BACKUP)! [Power: {u_pow:.2f}]"
+        elif speed_active:
+            act_name = target_spd_fac.upper()
+            pow_val = l_pow if l_act_clean == target_spd_fac else u_pow
+            self.facial_state_str = f"TRIGGERED {act_name} (SPEED BACKUP)! [Power: {pow_val:.2f}]"
             self.update_telemetry_box("facial_trigger")
             self.facial_latch_released = False
             self.trigger_speed_change()

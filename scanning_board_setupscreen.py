@@ -7,6 +7,7 @@
 #              It is intended to help nonverbal individuals communicate more effectively using thought and facial expressions. It is user-friendly and provides visual 
 #              feedback for both the user and the caregiver.
 #               
+#               Version History:
 #               2026-07-18
                 # - Reverted UI to native vector design, removing external image dependencies.
                 # - Updated color palette, typography, and canvas treatments to align with official EMOTIV brand specifications (#2ecc71 green, #d9145a magenta, slate backdrops).
