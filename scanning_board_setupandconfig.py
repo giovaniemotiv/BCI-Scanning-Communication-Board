@@ -12,10 +12,16 @@
 #               2026-07-27
                 # - Added Action Mapping Dropdowns in API screen: Choose from standard EMOTIV mental commands and facial EMG expressions for both SELECT and CHANGE SPEED actions.
                 # - route_bci_command and route_facial_command now evaluate incoming WebSocket triggers against your custom assigned mappings instead of hardcoded strings.
+#               2026-07-29
+                # - Removed the strict warning requiring Client ID and Client Secret to be filled in. Users can leave these blank if your application relies on cloud licensing, auto-discovery, or first-party pre-approved credentials.
+                # - Added the "Include Mental Commands" and "Include Facial Expressions" checkboxes directly into the ⚙️ API Settings dialog.
 ### ---------------------------------------------------------------------------------- ###
+
+
 import sys
 import json
 import os
+import time
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QGridLayout, 
                              QLabel, QVBoxLayout, QHBoxLayout, QPushButton, 
                              QStackedWidget, QCheckBox, QSlider, QDialog, 
@@ -35,7 +41,6 @@ DEFAULT_PHRASES_LIST = [
     "TO GO", "TO CALL", "A HUG", "A KISS", "COMPANY", "FLIP OVER", "SOMETHING ELSE"
 ]
 
-# Available EMOTIV Actions for Action Mapping
 MENTAL_COMMAND_OPTIONS = ["push", "pull", "lift", "drop", "left", "right", "rotateClockwise", "rotateCounterClockwise", "disappear", "None"]
 FACIAL_EXPRESSION_OPTIONS = ["clench", "furrow", "smile", "surprise", "smirkLeft", "smirkRight", "laugh", "None"]
 
@@ -79,7 +84,6 @@ BOARD_2_ALPHA = [
 ]
 
 
-# --- CAREGIVER CUSTOM PHRASE MANAGER DIALOG ---
 class PhraseManagerDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -199,13 +203,11 @@ class PhraseManagerDialog(QDialog):
             QMessageBox.critical(self, "Save Error", f"Could not save phrases.json:\n{e}")
 
 
-# --- GUI CREDENTIALS & ACTION MAPPING DIALOG ---
 class CortexCredentialsDialog(QDialog):
-    """Modal dialog for entering API credentials, profile, and assigning BCI actions."""
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("EMOTIV Cortex API & Trigger Mapping Configuration")
-        self.setFixedSize(520, 440)
+        self.setFixedSize(540, 500)
         
         self.setStyleSheet("""
             QDialog { background-color: #ffffff; font-family: 'Segoe UI'; }
@@ -215,17 +217,18 @@ class CortexCredentialsDialog(QDialog):
                 border: 1px solid #cbd5e1; border-radius: 4px; font-size: 11px;
             }
             QLineEdit:focus, QComboBox:focus { border: 1px solid #d9145a; background-color: #ffffff; }
+            QCheckBox { color: #334155; font-size: 11px; font-weight: bold; spacing: 6px; }
         """)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(25, 20, 25, 20)
 
-        header_lbl = QLabel("EMOTIV Cortex API & Expression Mapping")
+        header_lbl = QLabel("EMOTIV Cortex API & Application Setup")
         header_lbl.setFont(QFont("Segoe UI", 12, QFont.Weight.Bold))
         header_lbl.setStyleSheet("color: #d9145a; margin-bottom: 2px;")
         layout.addWidget(header_lbl)
 
-        sub_lbl = QLabel("Configure credentials and map your trained BCI commands to actions.")
+        sub_lbl = QLabel("Configure credentials, default input streams, and action mappings.")
         sub_lbl.setFont(QFont("Segoe UI", 9))
         sub_lbl.setStyleSheet("color: #64748b; margin-bottom: 10px;")
         layout.addWidget(sub_lbl)
@@ -234,28 +237,39 @@ class CortexCredentialsDialog(QDialog):
         form_layout.setSpacing(10)
 
         self.client_id_input = QLineEdit()
-        self.client_id_input.setPlaceholderText("Paste Client ID here...")
-        form_layout.addRow("Client ID:", self.client_id_input)
+        self.client_id_input.setPlaceholderText("Leave empty if cloud licensed...")
+        form_layout.addRow("Client ID (Optional):", self.client_id_input)
 
         self.client_secret_input = QLineEdit()
         self.client_secret_input.setEchoMode(QLineEdit.EchoMode.Password)
-        self.client_secret_input.setPlaceholderText("Paste Client Secret here...")
-        form_layout.addRow("Client Secret:", self.client_secret_input)
+        self.client_secret_input.setPlaceholderText("Leave empty if cloud licensed...")
+        form_layout.addRow("Client Secret (Optional):", self.client_secret_input)
 
         self.profile_name_input = QLineEdit()
         self.profile_name_input.setPlaceholderText("e.g. John_Insight")
         form_layout.addRow("Profile Name:", self.profile_name_input)
 
-        # Mapping Separator
-        sep_label = QLabel("─── BCI & Facial Action Mappings ───")
-        sep_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        sep_label.setStyleSheet("color: #94a3b8; font-size: 10px; margin-top: 8px; margin-bottom: 4px;")
-        form_layout.addRow(sep_label)
+        sep_label1 = QLabel("─── Default Active Telemetry Streams ───")
+        sep_label1.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        sep_label1.setStyleSheet("color: #94a3b8; font-size: 10px; margin-top: 6px; margin-bottom: 2px;")
+        form_layout.addRow(sep_label1)
 
-        # Dropdowns for Action Mapping
+        self.include_mental_cb = QCheckBox("Enable Mental Commands by Default")
+        self.include_mental_cb.setChecked(True)
+        form_layout.addRow("", self.include_mental_cb)
+
+        self.include_facial_cb = QCheckBox("Enable Facial Expressions by Default")
+        self.include_facial_cb.setChecked(True)
+        form_layout.addRow("", self.include_facial_cb)
+
+        sep_label2 = QLabel("─── BCI Action Trigger Mappings ───")
+        sep_label2.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        sep_label2.setStyleSheet("color: #94a3b8; font-size: 10px; margin-top: 6px; margin-bottom: 2px;")
+        form_layout.addRow(sep_label2)
+
         self.select_thought_combo = QComboBox()
         self.select_thought_combo.addItems(MENTAL_COMMAND_OPTIONS)
-        form_layout.addRow("SELECT (Thought):", self.select_thought_combo)
+        form_layout.addRow("SELECT (Mental Command):", self.select_thought_combo)
 
         self.select_facial_combo = QComboBox()
         self.select_facial_combo.addItems(FACIAL_EXPRESSION_OPTIONS)
@@ -263,7 +277,7 @@ class CortexCredentialsDialog(QDialog):
 
         self.speed_thought_combo = QComboBox()
         self.speed_thought_combo.addItems(MENTAL_COMMAND_OPTIONS)
-        form_layout.addRow("CHANGE SPEED (Thought):", self.speed_thought_combo)
+        form_layout.addRow("CHANGE SPEED (Mental Cmd):", self.speed_thought_combo)
 
         self.speed_facial_combo = QComboBox()
         self.speed_facial_combo.addItems(FACIAL_EXPRESSION_OPTIONS)
@@ -301,7 +315,9 @@ class CortexCredentialsDialog(QDialog):
                     self.client_secret_input.setText(cfg.get("cortex_client_secret", cfg.get("client_secret", "")))
                     self.profile_name_input.setText(cfg.get("profile_name", ""))
 
-                    # Set combo dropdown positions
+                    self.include_mental_cb.setChecked(cfg.get("include_mental_commands", True))
+                    self.include_facial_cb.setChecked(cfg.get("include_facial_expressions", True))
+
                     sel_th = cfg.get("select_thought", "push")
                     sel_fc = cfg.get("select_facial", "clench")
                     spd_th = cfg.get("speed_thought", "pull")
@@ -320,14 +336,12 @@ class CortexCredentialsDialog(QDialog):
         client_secret = self.client_secret_input.text().strip()
         profile_name = self.profile_name_input.text().strip()
 
-        if not client_id or not client_secret:
-            QMessageBox.warning(self, "Missing Credentials", "Client ID and Client Secret are required.")
-            return
-
         cfg = {
             "cortex_client_id": client_id,
             "cortex_client_secret": client_secret,
             "profile_name": profile_name,
+            "include_mental_commands": self.include_mental_cb.isChecked(),
+            "include_facial_expressions": self.include_facial_cb.isChecked(),
             "select_thought": self.select_thought_combo.currentText(),
             "select_facial": self.select_facial_combo.currentText(),
             "speed_thought": self.speed_thought_combo.currentText(),
@@ -342,7 +356,6 @@ class CortexCredentialsDialog(QDialog):
             QMessageBox.critical(self, "Save Error", f"Could not save config.json:\n{e}")
 
 
-# --- ASYNCHRONOUS OFFLINE TTS THREAD ---
 class TTSThread(QThread):
     def __init__(self, text):
         super().__init__()
@@ -358,7 +371,6 @@ class TTSThread(QThread):
             print(f"[TTS Exception] {e}")
 
 
-# --- BACKGROUND MULTI-STREAM CORTEX THREAD WORKER ---
 class EmotivCortexWorker(QThread):
     mental_command_signal = pyqtSignal(str, float)
     contact_quality_signal = pyqtSignal(dict)  
@@ -384,10 +396,6 @@ class EmotivCortexWorker(QThread):
                     profile_name = config.get("profile_name", "")
             except Exception as e:
                 self.status_signal.emit(f"Error loading config.json: {e}")
-
-        if not client_id or not client_secret:
-            self.status_signal.emit("API Credentials Missing in config.json. Click 'API Settings' to configure.")
-            return
 
         try:
             from cortex import Cortex
@@ -505,7 +513,6 @@ class EmotivCortexWorker(QThread):
             self.status_signal.emit(f"Cortex Connection Failed: {e}")
 
 
-# --- VISUAL HEADSET MAP CANVAS WIDGET ---
 class HeadsetMapWidget(QWidget):
     def __init__(self):
         super().__init__()
@@ -557,7 +564,6 @@ class HeadsetMapWidget(QWidget):
             painter.drawText(x - 13, y + 4, sensor)
 
 
-# --- MAIN WIZARD INTERFACE ---
 class BCICommunicationBoard(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -581,11 +587,12 @@ class BCICommunicationBoard(QMainWindow):
         QTimer.singleShot(500, self.check_credentials_on_launch)
 
     def load_bci_action_mappings(self):
-        """Loads configured action trigger mappings from config.json."""
         self.select_thought = "push"
         self.select_facial = "clench"
         self.speed_thought = "pull"
         self.speed_facial = "furrow"
+        self.init_include_mental = True
+        self.init_include_facial = True
 
         if os.path.exists("config.json"):
             try:
@@ -595,6 +602,8 @@ class BCICommunicationBoard(QMainWindow):
                     self.select_facial = cfg.get("select_facial", "clench")
                     self.speed_thought = cfg.get("speed_thought", "pull")
                     self.speed_facial = cfg.get("speed_facial", "furrow")
+                    self.init_include_mental = cfg.get("include_mental_commands", True)
+                    self.init_include_facial = cfg.get("include_facial_expressions", True)
             except Exception:
                 pass
 
@@ -634,6 +643,8 @@ class BCICommunicationBoard(QMainWindow):
         dlg = CortexCredentialsDialog(self)
         if dlg.exec() == QDialog.DialogCode.Accepted:
             self.load_bci_action_mappings()
+            self.mental_selector.setChecked(self.init_include_mental)
+            self.facial_selector.setChecked(self.init_include_facial)
             self.handle_stream_selectors_toggled()
             self.start_cortex_worker()
 
@@ -769,6 +780,13 @@ class BCICommunicationBoard(QMainWindow):
         self.MENTAL_THRESHOLD = 0.35      
         self.FACIAL_THRESHOLD = 0.70      
         self.SELECTION_COOLDOWN_MS = 2500 
+
+        # --- UNIFIED 0.5-SECOND SUSTAINED HOLD TIMERS ---
+        self.HOLD_DURATION_SEC = 0.5
+        self.mental_hold_start = None
+        self.mental_active_cmd = None
+        self.facial_hold_start = None
+        self.facial_active_act = None
         
         self.latch_released = True
         self.facial_latch_released = True 
@@ -833,14 +851,13 @@ class BCICommunicationBoard(QMainWindow):
         self.telemetry_label.setFont(QFont("Segoe UI", 11, QFont.Weight.Bold))
         self.main_layout.addWidget(self.telemetry_label)
 
-        # --- HARDWARE SENSITIVITY & TIMING TUNING BAR ---
+        # Tuning Bar
         tuning_panel = QWidget()
         tuning_panel.setStyleSheet("background-color: #ffffff; border-radius: 6px; border: 1px solid #e2e8f0;")
         tuning_layout = QHBoxLayout(tuning_panel)
         tuning_layout.setContentsMargins(15, 6, 15, 6)
 
-        # 1. Thought Sensitivity Slider
-        self.mental_slider_lbl = QLabel(f"Thought Sens: {self.MENTAL_THRESHOLD:.2f}")
+        self.mental_slider_lbl = QLabel(f"Mental Cmd Sens: {self.MENTAL_THRESHOLD:.2f}")
         self.mental_slider_lbl.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
         self.mental_slider_lbl.setStyleSheet("color: #4f5d75; border: none;")
         tuning_layout.addWidget(self.mental_slider_lbl)
@@ -855,7 +872,6 @@ class BCICommunicationBoard(QMainWindow):
 
         tuning_layout.addSpacing(20)
 
-        # 2. Facial Sensitivity Slider
         self.facial_slider_lbl = QLabel(f"Facial Sens: {self.FACIAL_THRESHOLD:.2f}")
         self.facial_slider_lbl.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
         self.facial_slider_lbl.setStyleSheet("color: #4f5d75; border: none;")
@@ -871,7 +887,6 @@ class BCICommunicationBoard(QMainWindow):
 
         tuning_layout.addSpacing(20)
 
-        # 3. Cooldown Duration Slider
         self.cooldown_slider_lbl = QLabel(f"Cooldown: {self.SELECTION_COOLDOWN_MS/1000:.1f}s")
         self.cooldown_slider_lbl.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
         self.cooldown_slider_lbl.setStyleSheet("color: #4f5d75; border: none;")
@@ -915,15 +930,15 @@ class BCICommunicationBoard(QMainWindow):
             
         status_layout.addStretch()
 
-        self.mental_selector = QCheckBox("Include Thoughts")
-        self.mental_selector.setChecked(True)
+        self.mental_selector = QCheckBox("Include Mental Commands")
+        self.mental_selector.setChecked(self.init_include_mental)
         self.mental_selector.setFont(QFont("Segoe UI", 10, QFont.Weight.Medium))
         self.mental_selector.setStyleSheet("QCheckBox { color: #334155; spacing: 4px; padding-right: 10px; }")
         self.mental_selector.toggled.connect(self.handle_stream_selectors_toggled)
         status_layout.addWidget(self.mental_selector)
 
         self.facial_selector = QCheckBox("Include Facial Expressions")
-        self.facial_selector.setChecked(True) 
+        self.facial_selector.setChecked(self.init_include_facial) 
         self.facial_selector.setFont(QFont("Segoe UI", 10, QFont.Weight.Medium))
         self.facial_selector.setStyleSheet("QCheckBox { color: #334155; spacing: 4px; padding-right: 15px; }")
         self.facial_selector.toggled.connect(self.handle_stream_selectors_toggled)
@@ -967,7 +982,7 @@ class BCICommunicationBoard(QMainWindow):
 
     def handle_mental_slider_changed(self, value):
         self.MENTAL_THRESHOLD = value / 100.0
-        self.mental_slider_lbl.setText(f"Thought Sens: {self.MENTAL_THRESHOLD:.2f}")
+        self.mental_slider_lbl.setText(f"Mental Cmd Sens: {self.MENTAL_THRESHOLD:.2f}")
         self.update_telemetry_box("neutral")
 
     def handle_facial_slider_changed(self, value):
@@ -984,7 +999,7 @@ class BCICommunicationBoard(QMainWindow):
             return
 
         mental_part = self.mental_state_str if self.mental_selector.isChecked() else "DISABLED"
-        text = f"BCI FRAMEWORK — MENTAL INTENT: {mental_part}"
+        text = f"BCI FRAMEWORK — MENTAL COMMAND INTENT: {mental_part}"
         
         if self.facial_selector.isChecked():
             text += f"   |   FACIAL EMG STATE: {self.facial_state_str}"
@@ -1021,6 +1036,18 @@ class BCICommunicationBoard(QMainWindow):
             self.controls_label.setText(f"{sel_f} = SELECT  •  {spd_f} = SPEED")
         else:
             self.controls_label.setText("ALL BCI OVERRIDES DISABLED")
+
+        # Persist checkbox state directly to config.json
+        if os.path.exists("config.json"):
+            try:
+                with open("config.json", "r") as f:
+                    cfg = json.load(f)
+                cfg["include_mental_commands"] = m_on
+                cfg["include_facial_expressions"] = f_on
+                with open("config.json", "w") as f:
+                    json.dump(cfg, f, indent=4)
+            except Exception:
+                pass
             
         self.update_telemetry_box("neutral")
 
@@ -1122,14 +1149,20 @@ class BCICommunicationBoard(QMainWindow):
 
     def route_bci_command(self, command, power):
         if self.page_container.currentIndex() != 1 or self.in_cooldown or self.is_paused:
+            self.mental_hold_start = None
+            self.mental_active_cmd = None
             return
 
         if not self.mental_selector.isChecked():
+            self.mental_hold_start = None
+            self.mental_active_cmd = None
             return
 
         clean_command = command.strip().lower()
 
         if clean_command == "neutral":
+            self.mental_hold_start = None
+            self.mental_active_cmd = None
             self.mental_state_str = f"NEUTRAL (IDLING) [Power: {power:.2f}]"
             self.update_telemetry_box("neutral")
             self.latch_released = True
@@ -1139,41 +1172,63 @@ class BCICommunicationBoard(QMainWindow):
         is_speed_cmd = (clean_command == self.speed_thought.lower())
 
         if not is_select_cmd and not is_speed_cmd:
+            self.mental_hold_start = None
+            self.mental_active_cmd = None
             return
 
         mapped_action = "SELECT" if is_select_cmd else "CHANGE SPEED"
 
         if power < self.MENTAL_THRESHOLD:
+            self.mental_hold_start = None
+            self.mental_active_cmd = None
             self.mental_state_str = f"{clean_command.upper()} ({mapped_action}) [Power: {power:.2f}] (Below Threshold)"
             self.update_telemetry_box("warning")
             self.latch_released = True
             return
 
         if not self.latch_released:
+            self.mental_hold_start = None
+            self.mental_active_cmd = None
             self.mental_state_str = f"{clean_command.upper()} ({mapped_action}) [Power: {power:.2f}] (LOCKED)"
             self.update_telemetry_box("locked")
             return
 
-        self.mental_state_str = f"TRIGGERED {clean_command.upper()}! [Power: {power:.2f}]"
-        self.update_telemetry_box("mental_trigger")
-        self.latch_released = False
-        
-        if is_select_cmd:
-            self.trigger_select_event()
-        elif is_speed_cmd:
-            self.trigger_speed_change()
+        # --- 0.5-SECOND SUSTAINED HOLD LOGIC FOR MENTAL COMMANDS ---
+        if self.mental_hold_start is None or self.mental_active_cmd != clean_command:
+            self.mental_hold_start = time.time()
+            self.mental_active_cmd = clean_command
+
+        elapsed = time.time() - self.mental_hold_start
+
+        if elapsed < self.HOLD_DURATION_SEC:
+            self.mental_state_str = f"HOLDING {clean_command.upper()} ({mapped_action})... ({elapsed:.1f}s / {self.HOLD_DURATION_SEC:.1f}s)"
+            self.update_telemetry_box("warning")
+        else:
+            self.mental_state_str = f"TRIGGERED {clean_command.upper()}! [Power: {power:.2f}]"
+            self.update_telemetry_box("mental_trigger")
+            self.latch_released = False
+            self.mental_hold_start = None
+            self.mental_active_cmd = None
+
+            if is_select_cmd:
+                self.trigger_select_event()
+            elif is_speed_cmd:
+                self.trigger_speed_change()
 
     def route_facial_command(self, u_act, u_pow, l_act, l_pow):
         if self.page_container.currentIndex() != 1 or self.in_cooldown or self.is_paused:
+            self.facial_hold_start = None
+            self.facial_active_act = None
             return
 
         if not self.facial_selector.isChecked():
+            self.facial_hold_start = None
+            self.facial_active_act = None
             return
 
         u_act_clean = u_act.strip().lower()
         l_act_clean = l_act.strip().lower()
 
-        # Handle alias mapping for furrow/frown
         if u_act_clean == "frown": u_act_clean = "furrow"
 
         target_sel_fac = self.select_facial.lower()
@@ -1183,13 +1238,15 @@ class BCICommunicationBoard(QMainWindow):
             (l_act_clean == target_sel_fac and l_pow >= self.FACIAL_THRESHOLD) or
             (u_act_clean == target_sel_fac and u_pow >= self.FACIAL_THRESHOLD)
         )
-        
+
         speed_active = (
             (l_act_clean == target_spd_fac and l_pow >= self.FACIAL_THRESHOLD) or
             (u_act_clean == target_spd_fac and u_pow >= self.FACIAL_THRESHOLD)
         )
 
         if not select_active and not speed_active:
+            self.facial_hold_start = None
+            self.facial_active_act = None
             self.facial_latch_released = True
             if self.facial_state_str != "READY (IDLING)":
                 self.facial_state_str = "READY (IDLING)"
@@ -1197,23 +1254,37 @@ class BCICommunicationBoard(QMainWindow):
             return
 
         if not self.facial_latch_released:
+            self.facial_hold_start = None
+            self.facial_active_act = None
             return
 
-        if select_active:
-            act_name = target_sel_fac.upper()
-            pow_val = l_pow if l_act_clean == target_sel_fac else u_pow
-            self.facial_state_str = f"TRIGGERED {act_name} (SELECT BACKUP)! [Power: {pow_val:.2f}]"
+        active_target = target_sel_fac if select_active else target_spd_fac
+        is_select = select_active
+
+        # --- 0.5-SECOND SUSTAINED HOLD LOGIC FOR FACIAL EXPRESSIONS ---
+        if self.facial_hold_start is None or self.facial_active_act != active_target:
+            self.facial_hold_start = time.time()
+            self.facial_active_act = active_target
+
+        elapsed = time.time() - self.facial_hold_start
+        act_name = active_target.upper()
+        action_label = "SELECT" if is_select else "SPEED"
+
+        if elapsed < self.HOLD_DURATION_SEC:
+            self.facial_state_str = f"HOLDING {act_name} ({action_label})... ({elapsed:.1f}s / {self.HOLD_DURATION_SEC:.1f}s)"
+            self.update_telemetry_box("warning")
+        else:
+            pow_val = l_pow if (l_act_clean == active_target) else u_pow
+            self.facial_state_str = f"TRIGGERED {act_name} ({action_label} BACKUP)! [Power: {pow_val:.2f}]"
             self.update_telemetry_box("facial_trigger")
             self.facial_latch_released = False
-            self.trigger_select_event()
-            
-        elif speed_active:
-            act_name = target_spd_fac.upper()
-            pow_val = l_pow if l_act_clean == target_spd_fac else u_pow
-            self.facial_state_str = f"TRIGGERED {act_name} (SPEED BACKUP)! [Power: {pow_val:.2f}]"
-            self.update_telemetry_box("facial_trigger")
-            self.facial_latch_released = False
-            self.trigger_speed_change()
+            self.facial_hold_start = None
+            self.facial_active_act = None
+
+            if is_select:
+                self.trigger_select_event()
+            else:
+                self.trigger_speed_change()
 
     def advance_scanner(self):
         if self.is_paused: return
@@ -1318,6 +1389,10 @@ class BCICommunicationBoard(QMainWindow):
         self.in_cooldown = False
         self.latch_released = True
         self.facial_latch_released = True
+        self.mental_hold_start = None
+        self.mental_active_cmd = None
+        self.facial_hold_start = None
+        self.facial_active_act = None
         
         if not self.is_paused:
             self.keyboard_network_status_label.setText("BCI: Scanner Active.")
@@ -1340,6 +1415,7 @@ class BCICommunicationBoard(QMainWindow):
                 lbl.setStyleSheet("background-color: #e2e8f0; color: #475569; border-radius: 4px;")
 
     def speak_message(self):
+        """Triggers asynchronous offline TTS speech for the composed text."""
         text_to_speak = self.composed_text.strip()
         if text_to_speak:
             self.tts_worker = TTSThread(text_to_speak)
