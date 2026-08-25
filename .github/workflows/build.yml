@@ -12,6 +12,11 @@ jobs:
   build:
     name: ${{ matrix.label }}
     runs-on: ${{ matrix.os }}
+    # Needed by the release step below; GITHUB_TOKEN is read-only by default,
+    # and a tag build that cannot write contents fails only at the last step,
+    # after both platforms have already been built.
+    permissions:
+      contents: write
     strategy:
       fail-fast: false
       matrix:
