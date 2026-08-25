@@ -1,0 +1,18 @@
+# UI
+PyQt6
+
+# EMOTIV Cortex transport
+websocket-client==1.9.0
+# cortex.py imports pydispatch on every platform, so this cannot stay
+# platform-specific or the build fails at startup.
+python-dispatch==0.2.3
+
+# Offline text-to-speech
+pyttsx3==2.99
+# pyttsx3 picks its driver at runtime: SAPI5 on Windows needs comtypes and
+# pywin32, NSSpeechSynthesizer on macOS needs pyobjc. Neither is pulled in
+# automatically, so both are named here per platform.
+comtypes==1.4.16; sys_platform == 'win32'
+pywin32==312; sys_platform == 'win32'
+pyobjc-core==12.1; sys_platform == 'darwin'
+pyobjc-framework-Cocoa==12.1; sys_platform == 'darwin'

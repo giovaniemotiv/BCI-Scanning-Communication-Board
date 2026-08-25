@@ -30,6 +30,15 @@ from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QGridLayout,
 from PyQt6.QtCore import QTimer, Qt, QThread, pyqtSignal, QPoint
 from PyQt6.QtGui import QFont, QPainter, QColor, QPen
 
+from app_paths import user_data_dir
+
+# Settings are written at runtime, so they cannot live inside the installed
+# bundle (read-only on macOS, under Program Files on Windows). Running from a
+# checkout, user_data_dir() still resolves to the repository folder, so the
+# files stay exactly where they were before packaging existed.
+CONFIG_FILE = os.path.join(user_data_dir(), "config.json")
+PHRASES_FILE = os.path.join(user_data_dir(), "phrases.json")
+
 # --- DEFAULT MATRIX PHRASES ---
 DEFAULT_PHRASES_LIST = [
     "I HAVE TO TELL YOU SOMETHING", "I LOVE YOU", "YES", "NO", "THANK YOU", "YOU'RE WELCOME", "HELLO",
@@ -46,9 +55,9 @@ FACIAL_EXPRESSION_OPTIONS = ["clench", "furrow", "smile", "surprise", "smirkLeft
 
 
 def load_phrases_from_file():
-    if os.path.exists("phrases.json"):
+    if os.path.exists(PHRASES_FILE):
         try:
-            with open("phrases.json", "r") as f:
+            with open(PHRASES_FILE, "r") as f:
                 phrases = json.load(f)
                 if isinstance(phrases, list) and len(phrases) > 0:
                     return phrases
@@ -196,7 +205,7 @@ class PhraseManagerDialog(QDialog):
         if "FLIP OVER" not in phrases:
             phrases.append("FLIP OVER")
         try:
-            with open("phrases.json", "w") as f:
+            with open(PHRASES_FILE, "w") as f:
                 json.dump(phrases, f, indent=4)
             self.accept()
         except Exception as e:
@@ -307,9 +316,9 @@ class CortexCredentialsDialog(QDialog):
         layout.addLayout(btn_layout)
 
     def load_existing_config(self):
-        if os.path.exists("config.json"):
+        if os.path.exists(CONFIG_FILE):
             try:
-                with open("config.json", "r") as f:
+                with open(CONFIG_FILE, "r") as f:
                     cfg = json.load(f)
                     self.client_id_input.setText(cfg.get("cortex_client_id", cfg.get("client_id", "")))
                     self.client_secret_input.setText(cfg.get("cortex_client_secret", cfg.get("client_secret", "")))
@@ -349,7 +358,7 @@ class CortexCredentialsDialog(QDialog):
         }
 
         try:
-            with open("config.json", "w") as f:
+            with open(CONFIG_FILE, "w") as f:
                 json.dump(cfg, f, indent=4)
             self.accept()
         except Exception as e:
@@ -387,9 +396,9 @@ class EmotivCortexWorker(QThread):
         client_secret = ""
         profile_name = ""
         
-        if os.path.exists("config.json"):
+        if os.path.exists(CONFIG_FILE):
             try:
-                with open("config.json", "r") as f:
+                with open(CONFIG_FILE, "r") as f:
                     config = json.load(f)
                     client_id = config.get("cortex_client_id", config.get("client_id", ""))
                     client_secret = config.get("cortex_client_secret", config.get("client_secret", ""))
@@ -401,6 +410,12 @@ class EmotivCortexWorker(QThread):
             from cortex import Cortex
         except ImportError:
             self.status_signal.emit("Could not find 'cortex.py' file.")
+            return
+
+        if not client_id or not client_secret:
+            self.status_signal.emit(
+                "No Cortex credentials yet — open ⚙️ API Settings and enter your "
+                "EMOTIV Client ID and Secret.")
             return
 
         try:
@@ -503,8 +518,24 @@ class EmotivCortexWorker(QThread):
                         getattr(cortex, method_name)(["com", "dev", "eq", "fac"])
                         break
 
+            def pending_approval_callback(*args, **kwargs):
+                self.status_signal.emit(
+                    "Approve this app in EMOTIV Launcher to continue — "
+                    "waiting for your approval...")
+
+            def access_granted_callback(*args, **kwargs):
+                self.status_signal.emit("Approved. Connecting to your headset...")
+
+            def cortex_error_callback(*args, **kwargs):
+                err = kwargs.get("error_data", {})
+                message = err.get("message", str(err)) if isinstance(err, dict) else str(err)
+                self.status_signal.emit(f"Cortex error: {message}")
+
             cortex.bind(create_session_done=session_done_callback)
             cortex.bind(new_com_data=handle_data_packet)
+            cortex.bind(pending_approval=pending_approval_callback)
+            cortex.bind(access_granted=access_granted_callback)
+            cortex.bind(inform_error=cortex_error_callback)
             
             self.status_signal.emit("Cortex Linked. Waiting for Device Packets...")
             cortex.open()
@@ -594,9 +625,9 @@ class BCICommunicationBoard(QMainWindow):
         self.init_include_mental = True
         self.init_include_facial = True
 
-        if os.path.exists("config.json"):
+        if os.path.exists(CONFIG_FILE):
             try:
-                with open("config.json", "r") as f:
+                with open(CONFIG_FILE, "r") as f:
                     cfg = json.load(f)
                     self.select_thought = cfg.get("select_thought", "push")
                     self.select_facial = cfg.get("select_facial", "clench")
@@ -636,7 +667,7 @@ class BCICommunicationBoard(QMainWindow):
         self.cortex_thread.start()
 
     def check_credentials_on_launch(self):
-        if not os.path.exists("config.json"):
+        if not os.path.exists(CONFIG_FILE):
             self.open_credentials_dialog()
 
     def open_credentials_dialog(self):
@@ -1038,13 +1069,13 @@ class BCICommunicationBoard(QMainWindow):
             self.controls_label.setText("ALL BCI OVERRIDES DISABLED")
 
         # Persist checkbox state directly to config.json
-        if os.path.exists("config.json"):
+        if os.path.exists(CONFIG_FILE):
             try:
-                with open("config.json", "r") as f:
+                with open(CONFIG_FILE, "r") as f:
                     cfg = json.load(f)
                 cfg["include_mental_commands"] = m_on
                 cfg["include_facial_expressions"] = f_on
-                with open("config.json", "w") as f:
+                with open(CONFIG_FILE, "w") as f:
                     json.dump(cfg, f, indent=4)
             except Exception:
                 pass

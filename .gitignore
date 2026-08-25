@@ -1,0 +1,15 @@
+__pycache__/
+*.pyc
+venv/
+.DS_Store
+
+# Per-machine Cortex credentials and caregiver phrase list
+config.json
+phrases.json
+
+# PyInstaller / installer output
+build/
+dist/
+installer/
+*.dmg
+*.exe

@@ -88,21 +88,25 @@ HEADSET_SCANNING_FINISHED = 142
 
 class Cortex(Dispatcher):
 
-    _events_ = ['inform_error','create_session_done', 'query_profile_done', 'load_unload_profile_done', 
+    _events_ = ['inform_error','pending_approval','access_granted','create_session_done', 'query_profile_done', 'load_unload_profile_done', 
                 'save_profile_done', 'get_mc_active_action_done','mc_brainmap_done', 'mc_action_sensitivity_done', 
                 'mc_training_threshold_done', 'create_record_done', 'stop_record_done','warn_cortex_stop_all_sub', 'warn_record_post_processing_done',
                 'inject_marker_done', 'update_marker_done', 'export_record_done', 'new_data_labels', 
                 'new_com_data', 'new_fe_data', 'new_eeg_data', 'new_mot_data', 'new_dev_data', 
                 'new_met_data', 'new_pow_data', 'new_sys_data']
     def __init__(self, client_id, client_secret, debug_mode=False, **kwargs):
-        client_id = "NKmRCa93rUl92S17YHFYUAiBxNQqKYLmrDTNyK6C"
-        client_secret = "BQ0S8dshKks4aYcUigE7JQ9vnSfgsZfBcmzAFtf0zkm1N4WZIXOtjSggD1t6PS81lFdGdvratmJS0B7NFeo2yaXsqVBjGNBXmzRkV6LqxmOB7eHdMXDqqNwY2Mp8Ynck"  
+        # Credentials come from the caller (the board reads them out of
+        # config.json, which the user fills in through the API Settings
+        # dialog). Nothing is baked in here.
         self.session_id = ''
         self.headset_id = ''
         self.debug = debug_mode
         self.debit = 10
         self.license = ''
         self.isHeadsetConnected = False
+        # Set while the user is being asked to approve the app in EMOTIV
+        # Launcher; see _poll_for_approval.
+        self._awaiting_approval = False
 
         if client_id == '':
             raise ValueError('Empty your_app_client_id. Please fill in your_app_client_id before running the example.')
@@ -160,6 +164,7 @@ class Cortex(Dispatcher):
             print(str(args[1]))
 
     def on_close(self, *args, **kwargs):
+        self._awaiting_approval = False
         print("on_close")
         print(args[1])
 
@@ -173,21 +178,32 @@ class Cortex(Dispatcher):
         if req_id == HAS_ACCESS_RIGHT_ID:
             access_granted = result_dic['accessGranted']
             if access_granted == True:
+                if self._awaiting_approval:
+                    self._awaiting_approval = False
+                    self.emit('access_granted')
                 # authorize
                 self.authorize()
-            else:
+            elif not self._awaiting_approval:
                 # request access
                 self.request_access()
+            # Otherwise this is the approval poll and the user has not clicked
+            # Approve yet, so leave requestAccess alone — calling it again
+            # re-raises the Launcher dialog on top of the one already open.
         elif req_id == REQUEST_ACCESS_ID:
             access_granted = result_dic['accessGranted']
 
             if access_granted == True:
                 # authorize
                 self.authorize()
-            else:
-                # wait approve from Emotiv Launcher
+            elif not self._awaiting_approval:
+                # Cortex has shown the approval prompt in EMOTIV Launcher. It
+                # does not push a second message once the user clicks Approve,
+                # so poll until the grant lands rather than making them restart.
                 msg = result_dic['message']
                 warnings.warn(msg)
+                self._awaiting_approval = True
+                self.emit('pending_approval', message=msg)
+                self._poll_for_approval()
         elif req_id == AUTHORIZE_ID:
             print("Authorize successfully.")
             self.auth = result_dic['cortexToken']
@@ -463,6 +479,21 @@ class Cortex(Dispatcher):
             print('controlDevice request \n', json.dumps(connect_headset_request, indent=4))
 
         self.ws.send(json.dumps(connect_headset_request, indent=4))
+
+    def _poll_for_approval(self):
+        """Re-check hasAccessRight until the user approves in EMOTIV Launcher."""
+        def loop():
+            while self._awaiting_approval:
+                time.sleep(2)
+                if not self._awaiting_approval:
+                    return
+                try:
+                    self.has_access_right()
+                except Exception:
+                    # Socket went away while waiting; nothing left to poll.
+                    return
+
+        threading.Thread(target=loop, name='ApprovalPoll', daemon=True).start()
 
     def request_access(self):
         print('request access --------------------------------')
